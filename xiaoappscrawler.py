@@ -14,7 +14,7 @@ import json
 import codecs
 
 IndexUrl = "http://app.mi.com/"
-ROOT_DIR = 'G:'+os.sep+'FtpDir'+os.sep+'XIAO_APPS'+os.sep
+ROOT_DIR = 'G:'+os.sep+'FtpDir'+os.sep+'NEW_XIAO_APPS'+os.sep
 
 PAGE_TXT = ROOT_DIR + 'page_txt'
 APPS_DETAIL = ROOT_DIR + 'app_details'
@@ -40,6 +40,8 @@ headers = {
 
 freeze_time = 300
 
+lock = threading.Lock()
+
 class XiaoAppsCrawlerByCategory(threading.Thread):
     def __init__(self,name):
         super(XiaoAppsCrawlerByCategory,self).__init__(name=name)
@@ -50,9 +52,16 @@ class XiaoAppsCrawlerByCategory(threading.Thread):
         self.session = requests.session()
         self.session.headers.update(headers)
 
+    def trim(self,text):
+        if not text:
+            return text
+        text = text.replace('<br />',' ')
+        text = text.replace('<br>',' ')
+        return text
+
     def GetAppDetails(self,url):
         try:
-            app_code = url[url.find('/')+1:]
+            app_code = url[url.rfind('/')+1:]
             if FINISHED_MAP.has_key(app_code):
                 return
 
@@ -62,54 +71,84 @@ class XiaoAppsCrawlerByCategory(threading.Thread):
 
 
             url_infos['app_code'] = app_code
+            product = ''
+            category = ''
+            company = ''
+            try:
+                template = '<div class="intro-titles"><p>(.*?)</p><h3>(.*?)</h3><p class="special-font action"><b>分类：</b>(.*?)<span style="margin'
+                app_intros = re.search(re.compile(template),content)
+                company = app_intros.group(1)
+                product = app_intros.group(2)
+                category = app_intros.group(3)
+            except Exception as e1:
+                print 'app_intros' + str(e1)
+                print url
 
-            template = '<div class="intro-titles"><p>(.*?)</p><h3>(.*?)</h3><p class="special-font action"><b>分类：</b>(.*?)<span style="margin'
-            app_intros = re.search(re.compile(template),content)
-            company = app_intros.group(1)
-            product = app_intros.group(2)
-            category = app_intros.group(3)
             url_infos['company'] = company
             url_infos['product'] = product
             url_infos['category'] = category
-
-            template = '<a href="/download/(\d+)" class="download">直接下载</a> </div></div>'
-            app_info_down = re.search(re.compile(template),content)
-            app_info_down = app_info_down.group(1)
+            app_info_down = ''
+            try:
+                template = '<a href="/download/(\d+)" class="download">直接下载</a> </div></div>'
+                app_info_down = re.search(re.compile(template),content)
+                app_info_down = app_info_down.group(1)
+            except Exception as e1:
+                print 'app_info_down' + str(e1)
+                print url
             # print app_info_down
 
             url_infos['app_info_down'] = app_info_down
+            app_text = ''
+            try:
+                app_text_start = content.find('应用介绍')
+                content = content[app_text_start:]
+                template = '<p class="pslide">(.*?)</p>'
+                app_text = re.search(re.compile(template),content)
+                app_text = app_text.group(1)
+            except Exception as e1:
+                print 'app_text' + str(e1)
+                print url
 
-            app_text_start = content.find('应用介绍')
-            content = content[app_text_start:]
-            template = '<p class="pslide">(.*?)</p>'
-            app_text = re.search(re.compile(template),content)
-            app_text = app_text.group(1)
             # print self.trim(app_text)
 
             url_infos['app_text'] = self.trim(app_text)
+            app_special_text = ''
+            try:
+                app_special_start = content.find('新版特性')
+                content = content[app_special_start:]
+                app_special_text = '<p class="pslide">(.*?)</p>'
+                app_special_text = re.search(re.compile(app_special_text),content)
+                app_special_text = app_special_text.group(1)
+                # print self.trim(app_special_text)
+            except Exception as e1:
+                print 'app_special' +str(e1)
+                print url
 
-            app_special_start = content.find('新版特性')
-            content = content[app_special_start:]
-            app_special_text = '<p class="pslide">(.*?)</p>'
-            app_special_text = re.search(re.compile(app_special_text),content)
-            app_special_text = app_special_text.group(1)
-            # print self.trim(app_special_text)
 
             url_infos['app_special_text'] = self.trim(app_special_text)
+            app_relations_set=[]
+            try:
+                app_relation_start = content.find('相关应用')
+                template = '<a href="/detail/(\d+)">'
+                app_relation = re.compile(template)
+                app_relations = re.findall(app_relation,content)
+                app_relations_set = []
+                for id in app_relations:
+                    app_relations_set.append(id)
+            except Exception as e1:
+                print 'app_relations'+str(e1)
+                print url
 
-            app_relation_start = content.find('相关应用')
-            template = '<a href="/detail/(\d+)">'
-            app_relation = re.compile(template)
-            app_relations = re.findall(app_relation,content)
-            app_relations_set = []
-            for id in app_relations:
-                app_relations_set.append(id)
+
             # print set(app_relations_set)
-            url_infos['app_relations_set'] = set(app_relations_set)
-            app_detail_handler.write(json.dumps(url_infos))
-            app_detail_handler.write(os.linesep)
-            finished_handler.write(app_code)
-            finished_handler.write(os.linesep)
+            url_infos['app_relations_set'] = list(set(app_relations_set))
+            if lock.acquire():
+                app_detail_handler.write(json.dumps(url_infos))
+                app_detail_handler.write(os.linesep)
+                finished_handler.write(app_code)
+                finished_handler.write(os.linesep)
+                lock.release()
+
         except Exception as e:
             print str(e)
             print url
@@ -136,8 +175,10 @@ class XiaoAppsCrawlerByCategory(threading.Thread):
                 self.page_queue.put('http://app.mi.com/detail/'+str(app["appId"]))
                 detail_url = 'http://app.mi.com/detail/'+str(app["appId"])
                 self.GetAppDetails(detail_url)
-                page_txt_handler.write('http://app.mi.com/detail/'+str(app["appId"]))
-                page_txt_handler.write(os.linesep)
+                if lock.acquire():
+                    page_txt_handler.write('http://app.mi.com/detail/'+str(app["appId"]))
+                    page_txt_handler.write(os.linesep)
+                    lock.release()
             index = index + 1
             time.sleep(5)
         print category_id + 'over'
@@ -186,18 +227,10 @@ class XiaoAppsCrawler():
             # index_url = IndexUrl+'category/'+str(url)
             # self.GetAllPagesByCategory(url)
             CategoryQueue.put(str(url))
-            break
+            # print url
 
-
-
-        # for thread in threads:
-        #     thread.join()
-
-        # time.sleep(100)
-
-
-    def run(self):
-        self.GetAllCategories()
+    # def run(self):
+    #     self.GetAllCategories()
 
 if __name__ == "__main__":
 
@@ -210,11 +243,23 @@ if __name__ == "__main__":
 
     xiaoAppsCrawler = XiaoAppsCrawler()
 
-    xiaoAppsCrawler.run()
+    xiaoAppsCrawler.GetAllCategories()
+    start = time.clock()
 
-    xiaoappscrawlerbycategory = XiaoAppsCrawlerByCategory('0')
-    # threads.append(xiaoappscrawlerbycategory)
-    xiaoappscrawlerbycategory.start()
+    threads = []
+    thraed_num = 8
+    for i in range(thraed_num):
+        xiaoappscrawlerbycategory = XiaoAppsCrawlerByCategory(str(i))
+        threads.append(xiaoappscrawlerbycategory)
+        xiaoappscrawlerbycategory.start()
 
-    xiaoappscrawlerbycategory.join()
+    # url = 'http://app.mi.com/detail/42036'
+    # xiaoappscrawlerbycategory = XiaoAppsCrawlerByCategory('0')
+    # xiaoappscrawlerbycategory.GetAppDetails(url)
+    #
+    for thread in threads:
+        thread.join()
+    time.sleep(100)
+
+    print time.clock() - start
     print "over"
