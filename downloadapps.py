@@ -60,7 +60,7 @@ class DownloaderApps(threading.Thread):
             # print 'http://app.mi.com/download/'+str(url_id)
             self.session.headers['Host'] = 'app.mi.com'
             resp = self.session.get('http://app.mi.com/download/'+str(url_id),timeout = 100,allow_redirects=False)
-            if not resp and resp.status_code != 200:
+            if not resp or resp.status_code != 200:
                 failed_downloader.write(url_id)
                 failed_downloader.write(os.linesep)
                 return
